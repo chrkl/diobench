@@ -136,6 +136,8 @@ int main(int argc, char **argv)
 
     if(ntasks > 1)
     	MPI_Reduce(&result.throughput, &total_tp, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+	else
+		total_tp = result.throughput;
 
     if(myrank == 0)
         printf("Total throughput: %f MB/s\n", total_tp);
