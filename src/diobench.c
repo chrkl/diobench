@@ -17,6 +17,8 @@ struct arg_lit *help;
 struct arg_lit *no_cleanup;
 struct arg_str *work_dir;
 struct arg_int *repititions;
+struct arg_lit *perform_read;
+struct arg_lit *perform_write;
 struct arg_end *end;
 
 int main(int argc, char **argv)
@@ -28,12 +30,14 @@ int main(int argc, char **argv)
 
     void *argtable[] = {
         block_count = arg_str0("c", "count", "<block-count>", "Number of blocks"),
-        own_dir = arg_lit0("d", "own-dir", "Own directory per process"),
+        own_dir = arg_lit0("o", "own-dir", "Own directory per process"),
         block_size = arg_str0("s", "block-size", "<block-size>", "Block size"),
         help = arg_lit0("h", "help", "Show help text"),
         no_cleanup = arg_lit0(NULL, "no-cleanup", "Do not clean up benchmark files"),
-        work_dir = arg_str0("w", "work-dir", "<dir>", "Work directory"),
-        repititions = arg_int0("r", "repititions", "<repititions>", "Number of repititions"),
+        work_dir = arg_str0("d", "work-dir", "<dir>", "Work directory"),
+        repititions = arg_int0("n", "repititions", "<repititions>", "Number of repititions"),
+        perform_read = arg_lit0("r", "read", "Read benchmark (previous read benchmark necessary)"),
+        perform_write = arg_lit0("w", "write", "Write benchmark"),
         end = arg_end(5)
     };
 
@@ -63,6 +67,13 @@ int main(int argc, char **argv)
     {
         /* Display the error details contained in the arg_end struct.*/
         arg_print_errors(stdout, end, argv[0]);
+        printf("Try '%s --help' for more information.\n",argv[0]);
+        return 1;
+    }
+
+    if(!(perform_read->count > 0 || perform_write->count > 0))
+    {
+        printf("Either read or write benchmark has to be performed\n");
         printf("Try '%s --help' for more information.\n",argv[0]);
         return 1;
     }
@@ -126,20 +137,27 @@ int main(int argc, char **argv)
 
     for(i = 0; i < rep; i++)
     {
-        bench_result_t result;
+        bench_result_t read_result, write_result;
+        int write_cleanup = 0;
+
+        if(perform_read > 0)
+            write_cleanup = 0;
+        if(perform_read <= 0)
+            write_cleanup = cleanup;
 
         if(rep > 1 && myrank == 0)
         {
             printf("Starting run number %d\n", i+1);
         }
 
-        result = benchmark(path, bs, count, cleanup);
+        if(perform_write->count > 0)
+            write_result = write_benchmark(path, bs, count, write_cleanup);
 
         printf("Rank %d: written %lu MB in %f seconds (%f MB/s)\n",
-               myrank, result.written_bytes / (1024 * 1024),  
-               result.runtime, result.throughput);
+               myrank, write_result.bytes / (1024 * 1024),  
+               write_result.runtime, write_result.throughput);
         
-        if(result.status != 0 )
+        if(write_result.status != 0 )
         {
             printf("Unable to delete the file\n");
             perror("Error");
@@ -150,17 +168,32 @@ int main(int argc, char **argv)
         	rmdir(dir);
         }
 
-        arg_free(argtable);
-
         if(ntasks > 1)
-        	MPI_Reduce(&result.throughput, &total_tp, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        	MPI_Reduce(&write_result.throughput, &total_tp, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     	else
-    		total_tp = result.throughput;
+    		total_tp = write_result.throughput;
 
         if(myrank == 0)
-            printf("Total throughput: %f MB/s\n", total_tp);
-    }
+            printf("Total write throughput: %f MB/s\n", total_tp);
 
+
+        if(perform_read->count > 0) 
+            read_result = read_benchmark(path, bs, count, write_cleanup);
+
+        printf("Rank %d: read %lu MB in %f seconds (%f MB/s)\n",
+            myrank, read_result.bytes / (1024 * 1024),  
+            read_result.runtime, read_result.throughput);
+
+        if(ntasks > 1)
+            MPI_Reduce(&read_result.throughput, &total_tp, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        else
+            total_tp = read_result.throughput;
+
+        if(myrank == 0)
+            printf("Total read throughput: %f MB/s\n", total_tp);
+    }
+    
+    arg_free(argtable);
     free(dir);
     free(path);
     MPI_Finalize();

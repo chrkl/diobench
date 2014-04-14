@@ -9,10 +9,11 @@
 
 typedef struct bench_result 
 {
-    long    written_bytes;
+    long    bytes;
     double  throughput;
     double 	runtime;
     int 	status;
 } bench_result_t;
 
-bench_result_t benchmark(const char *path, long bs, long count, int cleanup);
+bench_result_t write_benchmark(const char *path, long bs, long count, int cleanup);
+bench_result_t read_benchmark(const char *path, long bs, long count, int cleanup);
