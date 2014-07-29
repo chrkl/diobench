@@ -19,14 +19,19 @@ struct arg_str *work_dir;
 struct arg_int *repititions;
 struct arg_lit *perform_read;
 struct arg_lit *perform_write;
+struct arg_lit *random_read;
+struct arg_lit *random_write;
+struct arg_lit *synchronous;
+struct arg_str *basefile_size;
 struct arg_end *end;
 
 int main(int argc, char **argv)
 {
     char *path  = malloc(PATH_LEN * sizeof(char));
     char *dir = malloc(PATH_LEN * sizeof(char));
-    int myrank, ntasks, nerrors, cleanup, rep, i;
+    int myrank, ntasks, nerrors, cleanup, rep, i, sync_io;
     double total_tp;
+    long max_offset;
 
     void *argtable[] = {
         block_count = arg_str0("c", "count", "<block-count>", "Number of blocks"),
@@ -36,8 +41,12 @@ int main(int argc, char **argv)
         no_cleanup = arg_lit0(NULL, "no-cleanup", "Do not clean up benchmark files"),
         work_dir = arg_str0("d", "work-dir", "<dir>", "Work directory"),
         repititions = arg_int0("n", "repititions", "<repititions>", "Number of repititions"),
-        perform_read = arg_lit0("r", "read", "Read benchmark (previous read benchmark necessary)"),
+        perform_read = arg_lit0("r", "read", "Read benchmark (previous write benchmark necessary)"),
         perform_write = arg_lit0("w", "write", "Write benchmark"),
+        random_read = arg_lit0(NULL, "random-read", "Read benchmark with random offsets (previous random write benchmark necessary)"),
+        random_write = arg_lit0(NULL, "random-write", "Write benchmark with random offsets"),
+        synchronous = arg_lit0(NULL, "sync", "Synchronous IO operations"),
+        basefile_size = arg_str0(NULL, "basefile-size", "<basefile-size>", "Basefile size for random benchmarks"),
         end = arg_end(5)
     };
 
@@ -58,7 +67,7 @@ int main(int argc, char **argv)
         printf("Usage: %s", argv[0]);
         arg_print_syntax(stdout, argtable,"\n");
         printf("Run distributed file system benchmark\n");
-        arg_print_glossary(stdout, argtable,"  %-30s %s\n");
+        arg_print_glossary(stdout, argtable,"  %-40s %s\n");
         return 1;
     }
 
@@ -115,6 +124,25 @@ int main(int argc, char **argv)
         rep = 1;
     }
 
+    if(synchronous->count > 0)
+    {
+        sync_io = 1;
+    }
+    else
+    {
+        sync_io = 0;
+    }
+
+    if(basefile_size->count > 0)
+    {
+        max_offset = atol(basefile_size->sval[0]);
+    }
+    else
+    {
+        /* default basefile size is 10 GB */
+        max_offset = 1024L * 1024L * 1024L * 10;
+    }
+
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
     MPI_Comm_size(MPI_COMM_WORLD, &ntasks);
@@ -151,7 +179,7 @@ int main(int argc, char **argv)
         }
 
         if(perform_write->count > 0)
-            write_result = write_benchmark(path, bs, count, write_cleanup);
+            write_result = write_sequential_benchmark(path, bs, count, write_cleanup, sync_io);
 
         printf("Rank %d: written %lu MB in %f seconds (%f MB/s)\n",
                myrank, write_result.bytes / (1024 * 1024),  
@@ -178,7 +206,7 @@ int main(int argc, char **argv)
 
 
         if(perform_read->count > 0) 
-            read_result = read_benchmark(path, bs, count, write_cleanup);
+            read_result = read_sequential_benchmark(path, bs, count, write_cleanup, sync_io);
 
         printf("Rank %d: read %lu MB in %f seconds (%f MB/s)\n",
             myrank, read_result.bytes / (1024 * 1024),  
